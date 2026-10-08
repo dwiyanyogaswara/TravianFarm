@@ -39,6 +39,21 @@ class MainActivity : Activity() {
     companion object {
         private var instanceRef: java.lang.ref.WeakReference<MainActivity>? = null
 
+        fun attachServiceLiveWebView(view: WebView) {
+            val activity = instanceRef?.get() ?: return
+            activity.runOnUiThread {
+                if (!activity.isFinishing) {
+                    activity.attachServiceLiveWebViewInternal(view)
+                }
+            }
+        }
+
+        fun detachServiceLiveWebView(view: WebView) {
+            val activity = instanceRef?.get() ?: return
+            activity.runOnUiThread {
+                activity.detachServiceLiveWebViewInternal(view)
+            }
+        }
 
         fun requestVillageRefreshFromService(): Boolean {
             val activity = instanceRef?.get() ?: return false
@@ -293,6 +308,7 @@ class MainActivity : Activity() {
     private lateinit var capacityStatus: TextView
     private lateinit var logOverview: TextView
     private lateinit var recentLogs: TextView
+    private var liveAutomationWebView: WebView? = null
     private lateinit var botToggle: Switch
     private var selectionControlsLocked = false
 
@@ -521,6 +537,7 @@ class MainActivity : Activity() {
         }
 
         FarmAutomationService.attachVisibleWebView(webView)
+        FarmAutomationService.attachCurrentServiceWebViewToActivity()
 
         findViewById<Button>(R.id.loginTravian).setOnClickListener {
             logEvent("Tombol LOGIN ditekan — setelah login scanner village otomatis dijalankan")
@@ -542,6 +559,7 @@ class MainActivity : Activity() {
         setSelectionControlsLocked(serviceRunning)
 
         createNotificationChannel()
+        runCatching { FarmAutomationService.attachCurrentServiceWebViewToActivity() }
     }
 
     /**
@@ -3125,6 +3143,38 @@ class MainActivity : Activity() {
         } catch (_: Exception) { }
     }
 
+    private fun attachServiceLiveWebViewInternal(view: WebView) {
+        val content = findViewById<ViewGroup>(android.R.id.content) ?: return
+        if (liveAutomationWebView === view && view.parent === content) return
+
+        (view.parent as? ViewGroup)?.removeView(view)
+        view.visibility = View.VISIBLE
+        view.alpha = 0f
+        view.isClickable = true
+        view.isFocusable = true
+        view.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+
+        // WebView automation tetap ATTACHED ke Window sehingga MotionEvent benar-benar
+        // diproses oleh renderer video, tetapi ditempatkan di belakang seluruh UI dan
+        // dibuat transparan. Jadi tidak ada Live WebView yang terlihat/menutupi aplikasi.
+        content.addView(
+            view,
+            0,
+            ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
+        liveAutomationWebView = view
+        logEvent("WebView automation attached transparan untuk input iklan")
+    }
+
+    private fun detachServiceLiveWebViewInternal(view: WebView) {
+        if (liveAutomationWebView === view) {
+            (view.parent as? ViewGroup)?.removeView(view)
+            liveAutomationWebView = null
+        }
+    }
 
     private fun setupTabs() {
         // Jangan melakukan pembacaan/parsing log berat langsung di callback klik tab.
@@ -3436,7 +3486,10 @@ class MainActivity : Activity() {
         debugTrace("ENTER onDestroy")
         villageScanActive = false
         villageScanTargets.clear()
+        liveAutomationWebView?.let { FarmAutomationService.detachServiceLiveWebView(it) }
+        liveAutomationWebView = null
         FarmAutomationService.detachVisibleWebView(webView)
+        FarmAutomationService.onVisibleWebViewDetached()
         handler.removeCallbacks(countdownUpdater)
         logEvent("MainActivity ditutup; background service tetap dapat berjalan")
         logIoExecutor.shutdownNow()

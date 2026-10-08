@@ -20,8 +20,6 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.webkit.WebChromeClient
-import android.view.MotionEvent
-import android.view.View
 import android.util.Base64
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -47,6 +45,14 @@ class FarmAutomationService : Service() {
 
         fun detachVisibleWebView(view: WebView) {
             if (visibleWebViewRef?.get() === view) visibleWebViewRef = null
+        }
+
+        fun attachCurrentServiceWebViewToActivity() {
+            instanceRef?.get()?.webView?.let { MainActivity.attachServiceLiveWebView(it) }
+        }
+
+        fun detachServiceLiveWebView(view: WebView) {
+            MainActivity.detachServiceLiveWebView(view)
         }
 
         fun isRunningFromService(): Boolean {
@@ -755,22 +761,6 @@ class FarmAutomationService : Service() {
             settings.useWideViewPort = true
             settings.loadWithOverviewMode = true
             settings.textZoom = 100
-
-            // Tetap beri WebView automation ukuran/layout internal meskipun Live WebView
-            // sudah dihapus dari UI. Ini membuat koordinat MotionEvent tetap valid.
-            setBackgroundColor(android.graphics.Color.TRANSPARENT)
-            visibility = View.VISIBLE
-            post {
-                val dm = resources.displayMetrics
-                val w = dm.widthPixels.coerceAtLeast(1)
-                val h = dm.heightPixels.coerceAtLeast(1)
-                measure(
-                    View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
-                    View.MeasureSpec.makeMeasureSpec(h, View.MeasureSpec.EXACTLY)
-                )
-                layout(0, 0, w, h)
-            }
-
             CookieManager.getInstance().setAcceptCookie(true)
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
             addJavascriptInterface(FarmBridge(), "AndroidFarm")
@@ -798,6 +788,7 @@ class FarmAutomationService : Service() {
                 }
             }
         }
+        webView?.let { MainActivity.attachServiceLiveWebView(it) }
     }
 
     private fun onVisibleWebViewDetachedInternal() {
@@ -3084,7 +3075,9 @@ private fun clickTransferSelected() {
         updateNotification("Refresh Village setelah CICLE END | Next Run ${timeFormat.format(Date(nextAt))}")
     }
 
-    // 1. Fungsi Tambahan: Taruh fungsi pembantu sentuhan fisik ini di dalam kelas Kotlin Anda
+    // Simulasi ketuk pada WebView automation yang sekarang di-attach transparan
+// ke Window Activity. Karena WebView tidak lagi ditampilkan, event tetap masuk
+// ke renderer tanpa mengembalikan Live WebView ke UI.
 private fun simulatePhysicalClickOnWebView(webView: WebView) {
     webView.post {
         try {
@@ -3104,16 +3097,19 @@ private fun simulatePhysicalClickOnWebView(webView: WebView) {
             val y = (height / 2f).coerceIn(1f, (height - 1).toFloat())
             val downTime = android.os.SystemClock.uptimeMillis()
 
-            val downEvent = MotionEvent.obtain(
-                downTime, downTime, MotionEvent.ACTION_DOWN, x, y, 0
-            ).apply { source = android.view.InputDevice.SOURCE_TOUCHSCREEN }
-            val upEvent = MotionEvent.obtain(
-                downTime, downTime + 100, MotionEvent.ACTION_UP, x, y, 0
-            ).apply { source = android.view.InputDevice.SOURCE_TOUCHSCREEN }
+            val downEvent = android.view.MotionEvent.obtain(
+                downTime, downTime, android.view.MotionEvent.ACTION_DOWN, x, y, 0
+            ).apply {
+                source = android.view.InputDevice.SOURCE_TOUCHSCREEN
+            }
+            val upEvent = android.view.MotionEvent.obtain(
+                downTime, downTime + 100L, android.view.MotionEvent.ACTION_UP, x, y, 0
+            ).apply {
+                source = android.view.InputDevice.SOURCE_TOUCHSCREEN
+            }
 
             val downHandled = webView.dispatchTouchEvent(downEvent)
             val upHandled = webView.dispatchTouchEvent(upEvent)
-
             downEvent.recycle()
             upEvent.recycle()
 
@@ -3121,6 +3117,59 @@ private fun simulatePhysicalClickOnWebView(webView: WebView) {
                 "Simulasi ketuk selesai: ${width}x${height} @ (${x.toInt()},${y.toInt()}) " +
                     "DOWN=$downHandled UP=$upHandled"
             )
+
+            // Fallback DOM pointer/mouse event untuk ad player yang menggunakan
+            // overlay pointer daripada event langsung pada <video>.
+            webView.evaluateJavascript(
+                """
+                (() => {
+                    try {
+                        const videos = [...document.querySelectorAll('video')];
+                        const video = videos.find(v => {
+                            const r = v.getBoundingClientRect();
+                            return r.width > 0 && r.height > 0;
+                        }) || videos[0];
+                        if (!video) return 'video-missing';
+
+                        const r = video.getBoundingClientRect();
+                        const cx = r.left + r.width / 2;
+                        const cy = r.top + r.height / 2;
+                        const target = document.elementFromPoint(cx, cy) || video;
+                        const base = {
+                            bubbles:true,
+                            cancelable:true,
+                            view:window,
+                            clientX:cx,
+                            clientY:cy,
+                            button:0,
+                            buttons:1
+                        };
+
+                        try {
+                            target.dispatchEvent(new PointerEvent('pointerdown', {
+                                ...base, pointerId:1, pointerType:'touch'
+                            }));
+                            target.dispatchEvent(new PointerEvent('pointerup', {
+                                ...base, pointerId:1, pointerType:'touch', buttons:0
+                            }));
+                        } catch (_) {}
+                        target.dispatchEvent(new MouseEvent('mousedown', base));
+                        target.dispatchEvent(new MouseEvent('mouseup', {...base, buttons:0}));
+                        if (typeof target.click === 'function') target.click();
+
+                        if (video.paused) {
+                            const p = video.play();
+                            if (p && p.catch) p.catch(() => {});
+                        }
+                        return 'dom-tap-sent';
+                    } catch (e) {
+                        return 'dom-tap-error:' + String(e);
+                    }
+                })();
+                """.trimIndent()
+            ) { raw ->
+                logEvent("DOM video tap fallback: ${raw.orEmpty().trim('"')}")
+            }
         } catch (e: Exception) {
             logEvent("Simulation Touch Error: ${e.message}")
         }
@@ -3183,14 +3232,11 @@ private fun clickFasterUpgrade() {
                     const findVideo = () => {
                         const videos = [...document.querySelectorAll('video')];
                         return videos.find(v => {
-                            const src = v.currentSrc || v.src || '';
+                            const src = v.src || '';
                             const isTravianVideo = src.includes('traviangames.com') || v.style.zIndex === '999999';
                             const r = v.getBoundingClientRect();
                             return isTravianVideo && r.width > 0 && r.height > 0;
-                        }) || videos.find(v => {
-                            const r = v.getBoundingClientRect();
-                            return r.width > 0 && r.height > 0;
-                        }) || videos[0] || null;
+                        }) || videos || null;
                     };
 
                     const video = findVideo();
