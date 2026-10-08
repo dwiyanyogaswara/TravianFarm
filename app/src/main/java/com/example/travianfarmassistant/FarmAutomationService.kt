@@ -13,6 +13,9 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
 import android.net.Uri
+import android.provider.Settings
+import android.view.Gravity
+import android.view.WindowManager
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.webkit.CookieManager
@@ -49,7 +52,10 @@ class FarmAutomationService : Service() {
         }
 
         fun attachCurrentServiceWebViewToActivity() {
-            instanceRef?.get()?.webView?.let { MainActivity.attachServiceLiveWebView(it) }
+            // Compatibility name kept because MainActivity calls it.
+            // The automation WebView is now owned by the Service overlay window,
+            // not by the Activity, so minimizing the app cannot pause its renderer.
+            instanceRef?.get()?.attachWebViewToAutomationWindow()
         }
 
         fun keepServiceWebViewActiveInBackground() {
@@ -57,7 +63,7 @@ class FarmAutomationService : Service() {
         }
 
         fun detachServiceLiveWebView(view: WebView) {
-            MainActivity.detachServiceLiveWebView(view)
+            instanceRef?.get()?.detachWebViewFromAutomationWindow(view)
         }
 
         fun isRunningFromService(): Boolean {
@@ -146,6 +152,8 @@ class FarmAutomationService : Service() {
     }
 
     private var webView: WebView? = null
+    private var automationWindowManager: WindowManager? = null
+    private var automationWindowAttached = false
     private var running = false
     private var pendingStartAll = false
     private var loginInProgress = false
@@ -802,7 +810,74 @@ class FarmAutomationService : Service() {
                 }
             }
         }
-        webView?.let { MainActivity.attachServiceLiveWebView(it) }
+        webView?.let { attachWebViewToAutomationWindow(it) }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun attachWebViewToAutomationWindow(view: WebView) {
+        if (!Settings.canDrawOverlays(this)) {
+            logEvent("Background WebView: izin Display over other apps belum aktif")
+            return
+        }
+
+        try {
+            val wm = automationWindowManager ?: getSystemService(WINDOW_SERVICE) as WindowManager
+            automationWindowManager = wm
+
+            if (view.parent != null && view.parent !== view) {
+                (view.parent as? android.view.ViewGroup)?.removeView(view)
+            }
+
+            if (!automationWindowAttached) {
+                val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                } else {
+                    WindowManager.LayoutParams.TYPE_PHONE
+                }
+
+                val lp = WindowManager.LayoutParams(
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    type,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                        WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                    android.graphics.PixelFormat.TRANSLUCENT
+                ).apply {
+                    gravity = Gravity.TOP or Gravity.START
+                    alpha = 0.0f
+                    x = 0
+                    y = 0
+                }
+
+                wm.addView(view, lp)
+                automationWindowAttached = true
+                logEvent("Background WebView: overlay window attached transparan")
+            }
+
+            view.visibility = View.VISIBLE
+            view.alpha = 1f
+            view.onResume()
+            view.resumeTimers()
+        } catch (e: Exception) {
+            automationWindowAttached = false
+            logEvent("Background WebView: gagal attach overlay — ${e.message ?: e.javaClass.simpleName}")
+        }
+    }
+
+    private fun attachWebViewToAutomationWindow() {
+        webView?.let { attachWebViewToAutomationWindow(it) }
+    }
+
+    private fun detachWebViewFromAutomationWindow(view: WebView) {
+        try {
+            if (view.parent != null && automationWindowManager != null) {
+                automationWindowManager?.removeViewImmediate(view)
+            }
+        } catch (_: Exception) {
+        } finally {
+            automationWindowAttached = false
+        }
     }
 
     private fun keepServiceWebViewActiveInternal() {
@@ -3946,6 +4021,7 @@ private fun clickTransferSelected() {
         villageRefreshVillages.clear()
         pendingStartAll = false
         handler.removeCallbacksAndMessages(null)
+        webView?.let { detachWebViewFromAutomationWindow(it) }
         if (webView != null) {
             webView?.destroy()
             webView = null
@@ -4202,6 +4278,7 @@ private fun clickTransferSelected() {
         handler.removeCallbacks(backgroundWebViewWatchdog)
         handler.removeCallbacksAndMessages(null)
         releaseSchedulerWakeLock()
+        webView?.let { detachWebViewFromAutomationWindow(it) }
         webView?.destroy()
         webView = null
         instanceRef = null

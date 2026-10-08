@@ -8,6 +8,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.net.Uri
+import android.provider.Settings
 import android.os.Handler
 import android.os.Looper
 import android.webkit.CookieManager
@@ -645,6 +646,19 @@ class MainActivity : Activity() {
         val townBuilderEnabled = findViewById<CheckBox>(R.id.townBuilder).isChecked
         val user = usernameInput.text.toString().trim()
         val pass = passwordInput.text.toString()
+
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M &&
+            !Settings.canDrawOverlays(this)) {
+            farmStatus.text = "Izinkan 'Tampil di atas aplikasi lain' agar video tetap berjalan saat minimize."
+            logEvent("BOT belum dimulai: izin overlay diperlukan untuk WebView background")
+            startActivity(
+                android.content.Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:$packageName")
+                )
+            )
+            return false
+        }
         if (user.isBlank() || pass.isBlank()) {
             farmStatus.text = "Username dan password harus diisi sebelum BOT AKTIF."
             logEvent("Background service gagal dimulai: username/password kosong")
