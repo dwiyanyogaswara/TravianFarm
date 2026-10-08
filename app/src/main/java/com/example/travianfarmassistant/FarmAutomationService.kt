@@ -52,6 +52,10 @@ class FarmAutomationService : Service() {
             instanceRef?.get()?.webView?.let { MainActivity.attachServiceLiveWebView(it) }
         }
 
+        fun keepServiceWebViewActiveInBackground() {
+            instanceRef?.get()?.keepServiceWebViewActiveInternal()
+        }
+
         fun detachServiceLiveWebView(view: WebView) {
             MainActivity.detachServiceLiveWebView(view)
         }
@@ -102,6 +106,15 @@ class FarmAutomationService : Service() {
     }
 
     private val handler = Handler(Looper.getMainLooper())
+
+    private val backgroundWebViewWatchdog = object : Runnable {
+        override fun run() {
+            if (running) {
+                keepServiceWebViewActiveInternal()
+                handler.postDelayed(this, 2500L)
+            }
+        }
+    }
 
     // CPU tetap aktif saat layar mati selama BOT ON. Tidak mengubah Faster/Builder.
     private var schedulerWakeLock: PowerManager.WakeLock? = null
@@ -792,6 +805,44 @@ class FarmAutomationService : Service() {
         webView?.let { MainActivity.attachServiceLiveWebView(it) }
     }
 
+    private fun keepServiceWebViewActiveInternal() {
+        val wv = webView ?: return
+        try {
+            // Jangan panggil pauseTimers()/onPause() saat Activity diminimize.
+            // WebView ini adalah mesin automation yang tetap harus menjalankan
+            // JavaScript, timer, redirect, dan video advertisement.
+            wv.onResume()
+            wv.resumeTimers()
+
+            if (running) {
+                wv.post {
+                    try {
+                        wv.evaluateJavascript(
+                            """
+                            (function(){
+                              try {
+                                document.querySelectorAll('video').forEach(function(v){
+                                  if (v && v.paused && v.readyState >= 2) {
+                                    var r=v.getBoundingClientRect();
+                                    if (r.width>0 && r.height>0) {
+                                      v.play().catch(function(){});
+                                    }
+                                  }
+                                });
+                              } catch(e) {}
+                            })();
+                            """.trimIndent(),
+                            null
+                        )
+                    } catch (_: Exception) {
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            logEvent("WebView background keep-alive gagal — ${e.message ?: e.javaClass.simpleName}")
+        }
+    }
+
     private fun onVisibleWebViewDetachedInternal() {
         debugTrace("ENTER onVisibleWebViewDetachedInternal")
         if (running && webView == null) ensureServiceWebView()
@@ -799,6 +850,8 @@ class FarmAutomationService : Service() {
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun startAutomation() {
+        handler.removeCallbacks(backgroundWebViewWatchdog)
+        handler.post(backgroundWebViewWatchdog)
         debugTrace("ENTER startAutomation")
 
         // Jika tombol Bot diaktifkan kembali saat service/siklus lama masih aktif,
@@ -4146,6 +4199,7 @@ private fun clickTransferSelected() {
 
     override fun onDestroy() {
         debugTrace("ENTER onDestroy")
+        handler.removeCallbacks(backgroundWebViewWatchdog)
         handler.removeCallbacksAndMessages(null)
         releaseSchedulerWakeLock()
         webView?.destroy()
