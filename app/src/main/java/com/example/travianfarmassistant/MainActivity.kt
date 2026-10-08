@@ -39,21 +39,6 @@ class MainActivity : Activity() {
     companion object {
         private var instanceRef: java.lang.ref.WeakReference<MainActivity>? = null
 
-        fun attachServiceLiveWebView(view: WebView) {
-            val activity = instanceRef?.get() ?: return
-            activity.runOnUiThread {
-                if (!activity.isFinishing) {
-                    activity.attachServiceLiveWebViewInternal(view)
-                }
-            }
-        }
-
-        fun detachServiceLiveWebView(view: WebView) {
-            val activity = instanceRef?.get() ?: return
-            activity.runOnUiThread {
-                activity.detachServiceLiveWebViewInternal(view)
-            }
-        }
 
         fun requestVillageRefreshFromService(): Boolean {
             val activity = instanceRef?.get() ?: return false
@@ -308,8 +293,6 @@ class MainActivity : Activity() {
     private lateinit var capacityStatus: TextView
     private lateinit var logOverview: TextView
     private lateinit var recentLogs: TextView
-    private lateinit var liveWebViewContainer: ViewGroup
-    private var liveAutomationWebView: WebView? = null
     private lateinit var botToggle: Switch
     private var selectionControlsLocked = false
 
@@ -387,7 +370,6 @@ class MainActivity : Activity() {
         logOverview = findViewById(R.id.logOverview)
         dbTab = findViewById(R.id.dbTab)
         recentLogs = findViewById(R.id.recentLogs)
-        liveWebViewContainer = findViewById(R.id.liveWebViewContainer)
         botToggle = findViewById(R.id.botToggle)
         setupTabs()
         renderCapacityOverview()
@@ -539,7 +521,6 @@ class MainActivity : Activity() {
         }
 
         FarmAutomationService.attachVisibleWebView(webView)
-        FarmAutomationService.attachCurrentServiceWebViewToActivity()
 
         findViewById<Button>(R.id.loginTravian).setOnClickListener {
             logEvent("Tombol LOGIN ditekan — setelah login scanner village otomatis dijalankan")
@@ -3144,31 +3125,6 @@ class MainActivity : Activity() {
         } catch (_: Exception) { }
     }
 
-    private fun attachServiceLiveWebViewInternal(view: WebView) {
-        if (liveAutomationWebView === view && view.parent === liveWebViewContainer) {
-            return
-        }
-
-        (view.parent as? ViewGroup)?.removeView(view)
-        liveWebViewContainer.removeAllViews()
-        liveWebViewContainer.addView(
-            view,
-            ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-        )
-        liveAutomationWebView = view
-        view.visibility = View.VISIBLE
-        logEvent("LIVE WEBVIEW: WebView automation ditampilkan di Farm Builder")
-    }
-
-    private fun detachServiceLiveWebViewInternal(view: WebView) {
-        if (liveAutomationWebView === view) {
-            liveWebViewContainer.removeView(view)
-            liveAutomationWebView = null
-        }
-    }
 
     private fun setupTabs() {
         // Jangan melakukan pembacaan/parsing log berat langsung di callback klik tab.
@@ -3480,10 +3436,7 @@ class MainActivity : Activity() {
         debugTrace("ENTER onDestroy")
         villageScanActive = false
         villageScanTargets.clear()
-        liveAutomationWebView?.let { FarmAutomationService.detachServiceLiveWebView(it) }
-        liveAutomationWebView = null
         FarmAutomationService.detachVisibleWebView(webView)
-        FarmAutomationService.onVisibleWebViewDetached()
         handler.removeCallbacks(countdownUpdater)
         logEvent("MainActivity ditutup; background service tetap dapat berjalan")
         logIoExecutor.shutdownNow()

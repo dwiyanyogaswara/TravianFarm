@@ -47,13 +47,6 @@ class FarmAutomationService : Service() {
             if (visibleWebViewRef?.get() === view) visibleWebViewRef = null
         }
 
-        fun attachCurrentServiceWebViewToActivity() {
-            instanceRef?.get()?.webView?.let { MainActivity.attachServiceLiveWebView(it) }
-        }
-
-        fun detachServiceLiveWebView(view: WebView) {
-            MainActivity.detachServiceLiveWebView(view)
-        }
 
         fun isRunningFromService(): Boolean {
             return instanceRef?.get()?.running == true
@@ -75,9 +68,6 @@ class FarmAutomationService : Service() {
             instanceRef?.get()?.requestTravianLogoutInternal()
         }
 
-        fun onVisibleWebViewDetached() {
-            instanceRef?.get()?.onVisibleWebViewDetachedInternal()
-        }
 
         const val ACTION_START = "com.example.travianfarmassistant.START"
         const val ACTION_STOP = "com.example.travianfarmassistant.STOP"
@@ -788,13 +778,8 @@ class FarmAutomationService : Service() {
                 }
             }
         }
-        webView?.let { MainActivity.attachServiceLiveWebView(it) }
     }
 
-    private fun onVisibleWebViewDetachedInternal() {
-        debugTrace("ENTER onVisibleWebViewDetachedInternal")
-        if (running && webView == null) ensureServiceWebView()
-    }
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun startAutomation() {
