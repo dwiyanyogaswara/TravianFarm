@@ -308,7 +308,6 @@ class MainActivity : Activity() {
     private lateinit var capacityStatus: TextView
     private lateinit var logOverview: TextView
     private lateinit var recentLogs: TextView
-    private lateinit var liveWebViewContainer: ViewGroup
     private var liveAutomationWebView: WebView? = null
     private lateinit var botToggle: Switch
     private var selectionControlsLocked = false
@@ -387,7 +386,6 @@ class MainActivity : Activity() {
         logOverview = findViewById(R.id.logOverview)
         dbTab = findViewById(R.id.dbTab)
         recentLogs = findViewById(R.id.recentLogs)
-        liveWebViewContainer = findViewById(R.id.liveWebViewContainer)
         botToggle = findViewById(R.id.botToggle)
         setupTabs()
         renderCapacityOverview()
@@ -3028,16 +3026,6 @@ class MainActivity : Activity() {
     override fun onPause() {
         debugTrace("ENTER onPause")
         handler.removeCallbacks(recentLogRefreshRunnable)
-
-        // Activity boleh masuk background/minimize, tetapi WebView milik
-        // automation service harus tetap aktif untuk video/JavaScript/redirect.
-        if (getSharedPreferences("config", MODE_PRIVATE)
-                .getBoolean("service_running", false)) {
-            runCatching {
-                FarmAutomationService.keepServiceWebViewActiveInBackground()
-            }
-        }
-
         super.onPause()
     }
 
@@ -3155,27 +3143,39 @@ class MainActivity : Activity() {
     }
 
     private fun attachServiceLiveWebViewInternal(view: WebView) {
-        if (liveAutomationWebView === view && view.parent === liveWebViewContainer) {
+        val content = findViewById<ViewGroup>(android.R.id.content)
+
+        if (liveAutomationWebView === view && view.parent === content) {
             return
         }
 
         (view.parent as? ViewGroup)?.removeView(view)
-        liveWebViewContainer.removeAllViews()
-        liveWebViewContainer.addView(
+
+        content.addView(
             view,
+            0,
             ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
         )
+
         liveAutomationWebView = view
+
+        // Keep the automation WebView attached to a real Activity window so
+        // renderer/media input can continue working, but never show it to the user.
         view.visibility = View.VISIBLE
-        logEvent("LIVE WEBVIEW: WebView automation ditampilkan di Farm Builder")
+        view.alpha = 0f
+        view.isClickable = true
+        view.isFocusable = true
+        view.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+
+        logEvent("LIVE WEBVIEW: WebView automation attached transparan")
     }
 
     private fun detachServiceLiveWebViewInternal(view: WebView) {
         if (liveAutomationWebView === view) {
-            liveWebViewContainer.removeView(view)
+            (view.parent as? ViewGroup)?.removeView(view)
             liveAutomationWebView = null
         }
     }
