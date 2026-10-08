@@ -18,10 +18,10 @@ import android.security.keystore.KeyProperties
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
+import android.view.View
 import android.webkit.WebViewClient
 import android.webkit.WebChromeClient
 import android.util.Base64
-import android.view.View
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.spec.GCMParameterSpec
@@ -33,7 +33,6 @@ import java.util.Date
 import java.util.Locale
 import java.lang.ref.WeakReference
 import kotlin.random.Random
-
 
 class FarmAutomationService : Service() {
     companion object {
@@ -3077,108 +3076,9 @@ private fun clickTransferSelected() {
         updateNotification("Refresh Village setelah CICLE END | Next Run ${timeFormat.format(Date(nextAt))}")
     }
 
-    // Simulasi ketuk pada WebView automation yang sekarang di-attach transparan
-// ke Window Activity. Karena WebView tidak lagi ditampilkan, event tetap masuk
-// ke renderer tanpa mengembalikan Live WebView ke UI.
-private fun simulatePhysicalClickOnWebView(webView: WebView) {
-    webView.post {
-        try {
-            val dm = resources.displayMetrics
-            val width = webView.width.takeIf { it > 0 } ?: dm.widthPixels.coerceAtLeast(1)
-            val height = webView.height.takeIf { it > 0 } ?: dm.heightPixels.coerceAtLeast(1)
+    
 
-            if (webView.width <= 0 || webView.height <= 0) {
-                webView.measure(
-                    View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
-                    View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY)
-                )
-                webView.layout(0, 0, width, height)
-            }
-
-            val x = (width / 2f).coerceIn(1f, (width - 1).toFloat())
-            val y = (height / 2f).coerceIn(1f, (height - 1).toFloat())
-            val downTime = android.os.SystemClock.uptimeMillis()
-
-            val downEvent = android.view.MotionEvent.obtain(
-                downTime, downTime, android.view.MotionEvent.ACTION_DOWN, x, y, 0
-            ).apply {
-                source = android.view.InputDevice.SOURCE_TOUCHSCREEN
-            }
-            val upEvent = android.view.MotionEvent.obtain(
-                downTime, downTime + 100L, android.view.MotionEvent.ACTION_UP, x, y, 0
-            ).apply {
-                source = android.view.InputDevice.SOURCE_TOUCHSCREEN
-            }
-
-            val downHandled = webView.dispatchTouchEvent(downEvent)
-            val upHandled = webView.dispatchTouchEvent(upEvent)
-            downEvent.recycle()
-            upEvent.recycle()
-
-            logEvent(
-                "Simulasi ketuk selesai: ${width}x${height} @ (${x.toInt()},${y.toInt()}) " +
-                    "DOWN=$downHandled UP=$upHandled"
-            )
-
-            // Fallback DOM pointer/mouse event untuk ad player yang menggunakan
-            // overlay pointer daripada event langsung pada <video>.
-            webView.evaluateJavascript(
-                """
-                (() => {
-                    try {
-                        const videos = [...document.querySelectorAll('video')];
-                        const video = videos.find(v => {
-                            const r = v.getBoundingClientRect();
-                            return r.width > 0 && r.height > 0;
-                        }) || videos[0];
-                        if (!video) return 'video-missing';
-
-                        const r = video.getBoundingClientRect();
-                        const cx = r.left + r.width / 2;
-                        const cy = r.top + r.height / 2;
-                        const target = document.elementFromPoint(cx, cy) || video;
-                        const base = {
-                            bubbles:true,
-                            cancelable:true,
-                            view:window,
-                            clientX:cx,
-                            clientY:cy,
-                            button:0,
-                            buttons:1
-                        };
-
-                        try {
-                            target.dispatchEvent(new PointerEvent('pointerdown', {
-                                ...base, pointerId:1, pointerType:'touch'
-                            }));
-                            target.dispatchEvent(new PointerEvent('pointerup', {
-                                ...base, pointerId:1, pointerType:'touch', buttons:0
-                            }));
-                        } catch (_) {}
-                        target.dispatchEvent(new MouseEvent('mousedown', base));
-                        target.dispatchEvent(new MouseEvent('mouseup', {...base, buttons:0}));
-                        if (typeof target.click === 'function') target.click();
-
-                        if (video.paused) {
-                            const p = video.play();
-                            if (p && p.catch) p.catch(() => {});
-                        }
-                        return 'dom-tap-sent';
-                    } catch (e) {
-                        return 'dom-tap-error:' + String(e);
-                    }
-                })();
-                """.trimIndent()
-            ) { raw ->
-                logEvent("DOM video tap fallback: ${raw.orEmpty().trim('"')}")
-            }
-        } catch (e: Exception) {
-            logEvent("Simulation Touch Error: ${e.message}")
-        }
-    }
-}
-// 2. Fungsi Utama clickFasterUpgrade yang Diperbarui
-private fun clickFasterUpgrade() {
+    private fun clickFasterUpgrade() {
     if (!running || !builderInProgress) return
 
     val view = automationWebView() ?: return
@@ -3191,6 +3091,7 @@ private fun clickFasterUpgrade() {
     val villageName = builderVillages.getOrNull(builderVillageIndex)?.second
         ?: "Village ${builderVillageIndex + 1}"
 
+    // 1. Eksekusi klik tombol Faster
     val js = """
         (() => {
             try {
@@ -3225,20 +3126,25 @@ private fun clickFasterUpgrade() {
 
         logEvent("$builderName: $villageName klik Faster — tunggu 5 detik iklan muncul")
 
+        // 2. Tunggu 5 detik agar pop-up iklan termuat di layar
         handler.postDelayed({
             if (!running || !builderInProgress) return@postDelayed
 
+            // Mengaktifkan video, memaksa putar
             view.evaluateJavascript(
                 """
                 (() => {
                     const findVideo = () => {
                         const videos = [...document.querySelectorAll('video')];
                         return videos.find(v => {
-                            const src = v.src || '';
+                            const src = v.currentSrc || v.src || '';
                             const isTravianVideo = src.includes('traviangames.com') || v.style.zIndex === '999999';
                             const r = v.getBoundingClientRect();
                             return isTravianVideo && r.width > 0 && r.height > 0;
-                        }) || videos || null;
+                        }) || videos.find(v => {
+                            const r = v.getBoundingClientRect();
+                            return r.width > 0 && r.height > 0;
+                        }) || videos[0] || null;
                     };
 
                     const video = findVideo();
@@ -3247,7 +3153,7 @@ private fun clickFasterUpgrade() {
                             video.muted = false;
                             video.volume = 1.0;
                             video.play().catch(() => {});
-                            return "playing[" + (video.duration ? video.duration.toFixed(1) + "s" : "30.0s") + "]";
+                            return "playing[" + video.duration.toFixed(1) + "s]";
                         } catch (e) {
                             return "play-error";
                         }
@@ -3257,27 +3163,23 @@ private fun clickFasterUpgrade() {
                 """.trimIndent()
             ) { rawCount ->
                 val videoStats = rawCount.orEmpty().trim('"')
-                logEvent("$builderName: $villageName Iklan Aktif ($videoStats) — Memicu simulasi ketuk layar & menunggu Auto-Redirect...")
+                logEvent("$builderName: $villageName Iklan Aktif ($videoStats) — Memulai pelacakan durasi & menunggu Auto-Redirect...")
 
-                // KUNCI UTAMA: Tembakkan ketukan fisik tiruan 2 detik setelah iklan muncul untuk membuka kunci play video
-                handler.postDelayed({
-                    if (running && builderInProgress && builderStage == "WAIT_VIDEO_SKIP") {
-                        logEvent("$builderName: $villageName Mengirimkan ketukan fisik tiruan ke pusat layar WebView...")
-                        simulatePhysicalClickOnWebView(view)
-                    }
-                }, 2000L)
-
-                // PEMANTAU TIMELINE & REDIRECT
+                // ====================================================================
+                // TAMBAHAN: FITUR LOG TIMELINE VIDEO SETIAP 3 DETIK & MONITOR REDIRECT
+                // ====================================================================
                 val trackerHandler = android.os.Handler(android.os.Looper.getMainLooper())
                 var secondsPassed = 0
                 
                 val trackRunnable = object : Runnable {
                     override fun run() {
+                        // Hentikan pelacakan jika bot atau proses builder dihentikan user
                         if (!running || !builderInProgress || builderStage != "WAIT_VIDEO_SKIP") return
                         
                         val currentUrl = view.url.orEmpty()
                         secondsPassed++
 
+                        // A. Cek apakah halaman sudah dialihkan ke dorf1 atau dorf2
                         if (currentUrl.contains("dorf1.php") || currentUrl.contains("dorf2.php")) {
                             logEvent("$builderName: $villageName Terdeteksi Auto-Redirect Berhasil (${currentUrl.substringAfter("com/")}) — Lanjut Desa!")
                             
@@ -3288,17 +3190,16 @@ private fun clickFasterUpgrade() {
                             builderStage = "NORMAL"
 
                             if (townBuilderInProgress) advanceTownBuilderVillage() else goToNextBuilderVillage()
-                            return
+                            return // Hentikan loop interval
                         }
 
+                        // B. Setiap kelipatan 3 detik, tembak JS untuk ambil currentTime video iklan saat ini
                         if (secondsPassed % 3 == 0) {
                             view.evaluateJavascript(
                                 """
                                 (() => {
                                     const video = [...document.querySelectorAll('video')].find(v => v.src.includes('traviangames.com') || v.style.zIndex === '999999');
                                     if (video) {
-                                        // Tetap bantu pancing .play() dari JS jika ketukan sistem operasi sudah masuk
-                                        if (video.paused) video.play().catch(() => {});
                                         return video.currentTime.toFixed(1) + "s / " + (video.duration ? video.duration.toFixed(1) + "s" : "unknown");
                                     }
                                     return "video-missing";
@@ -3310,8 +3211,9 @@ private fun clickFasterUpgrade() {
                             }
                         }
 
-                        if (secondsPassed >= 45) {
-                            logEvent("$builderName: $villageName Gagal Redirect setelah 45 detik. Melompati paksa desa.")
+                        // C. Batas Toleransi Pengaman (Timeout 50 Detik)
+                        if (secondsPassed >= 50) {
+                            logEvent("$builderName: $villageName Gagal Redirect setelah 42 detik. Melompati paksa desa.")
                             
                             upgradeClickSourceUrl = ""
                             pendingUpgradeUrl = ""
@@ -3321,15 +3223,24 @@ private fun clickFasterUpgrade() {
                             
                             if (townBuilderInProgress) advanceTownBuilderVillage() else goToNextBuilderVillage()
                         } else {
+                            // Lanjutkan pengecekan interval 1 detik berikutnya
                             trackerHandler.postDelayed(this, 1000L)
                         }
                     }
                 }
+                
+                // Pemicu awal loop interval pelacakan
                 trackerHandler.postDelayed(trackRunnable, 1000L)
             }
         }, 5000L)
     }
 }
+
+    
+        
+
+
+
 
 
     private fun clickTownUpgrade() {
