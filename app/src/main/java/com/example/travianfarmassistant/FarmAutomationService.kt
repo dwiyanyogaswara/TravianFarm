@@ -21,6 +21,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.webkit.WebChromeClient
 import android.util.Base64
+import android.view.View
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.spec.GCMParameterSpec
@@ -32,6 +33,7 @@ import java.util.Date
 import java.util.Locale
 import java.lang.ref.WeakReference
 import kotlin.random.Random
+
 
 class FarmAutomationService : Service() {
     companion object {
