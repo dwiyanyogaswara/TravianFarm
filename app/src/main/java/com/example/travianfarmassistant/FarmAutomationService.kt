@@ -3075,9 +3075,43 @@ private fun clickTransferSelected() {
         updateNotification("Refresh Village setelah CICLE END | Next Run ${timeFormat.format(Date(nextAt))}")
     }
 
-    
+    // 1. Fungsi Tambahan: Taruh fungsi pembantu sentuhan fisik ini di dalam kelas Kotlin Anda
+private fun simulatePhysicalClickOnWebView(webView: WebView) {
+    webView.post {
+        try {
+            // Ambil koordinat titik tengah dari komponen WebView Anda saat ini
+            val width = webView.width
+            val height = webView.height
+            val x = (width / 2).toFloat()
+            val y = (height / 2).toFloat()
 
-    private fun clickFasterUpgrade() {
+            val downTime = android.os.SystemClock.uptimeMillis()
+            val eventTime = android.os.SystemClock.uptimeMillis()
+
+            // Buat event sentuhan jari menekan layar (ACTION_DOWN)
+            val downEvent = android.view.MotionEvent.obtain(
+                downTime, eventTime, android.view.MotionEvent.ACTION_DOWN, x, y, 0
+            )
+            // Buat event sentuhan jari diangkat dari layar (ACTION_UP)
+            val upEvent = android.view.MotionEvent.obtain(
+                downTime, eventTime + 100, android.view.MotionEvent.ACTION_UP, x, y, 0
+            )
+
+            // Tembakkan sentuhan fisik tiruan langsung ke sistem WebView
+            webView.dispatchTouchEvent(downEvent)
+            webView.dispatchTouchEvent(upEvent)
+
+            // Bersihkan memori event
+            downEvent.recycle()
+            upEvent.recycle()
+        } catch (e: Exception) {
+            logEvent("Simulation Touch Error: ${e.message}")
+        }
+    }
+}
+
+// 2. Fungsi Utama clickFasterUpgrade yang Diperbarui
+private fun clickFasterUpgrade() {
     if (!running || !builderInProgress) return
 
     val view = automationWebView() ?: return
@@ -3090,7 +3124,6 @@ private fun clickTransferSelected() {
     val villageName = builderVillages.getOrNull(builderVillageIndex)?.second
         ?: "Village ${builderVillageIndex + 1}"
 
-    // 1. Eksekusi klik tombol Faster
     val js = """
         (() => {
             try {
@@ -3125,77 +3158,59 @@ private fun clickTransferSelected() {
 
         logEvent("$builderName: $villageName klik Faster — tunggu 5 detik iklan muncul")
 
-        // 2. Tunggu 5 detik agar pop-up iklan termuat di layar
         handler.postDelayed({
             if (!running || !builderInProgress) return@postDelayed
 
-            // Mengaktifkan video, memaksa putar
             view.evaluateJavascript(
-    """
-    (() => {
-        const findVideo = () => {
-            const videos = [...document.querySelectorAll('video')];
-            return videos.find(v => {
-                const src = v.src || '';
-                const isTravianVideo = src.includes('traviangames.com') || v.style.zIndex === '999999';
-                const r = v.getBoundingClientRect();
-                return isTravianVideo && r.width > 0 && r.height > 0;
-            }) || videos || null;
-        };
+                """
+                (() => {
+                    const findVideo = () => {
+                        const videos = [...document.querySelectorAll('video')];
+                        return videos.find(v => {
+                            const src = v.src || '';
+                            const isTravianVideo = src.includes('traviangames.com') || v.style.zIndex === '999999';
+                            const r = v.getBoundingClientRect();
+                            return isTravianVideo && r.width > 0 && r.height > 0;
+                        }) || videos || null;
+                    };
 
-        const video = findVideo();
-        if (video) {
-            try {
-                video.muted = true; // WAJIB: Setel senyap terlebih dahulu agar Android melonggarkan blokir autoplay
-                video.volume = 0;
-                
-                // KUNCI UTAMA: Simulasikan rentetan event ketukan fisik tiruan pada video
-                const triggerEvents = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'];
-                triggerEvents.forEach(evtType => {
-                    const evt = new MouseEvent(evtType, {
-                        bubbles: true,
-                        cancelable: true,
-                        view: window
-                    });
-                    video.dispatchEvent(evt);
-                });
-
-                // Paksa putar setelah simulasi ketukan dijalankan
-                video.play().then(() => {
-                    // Setelah sukses berputar lancar, kembalikan suaranya secara perlahan
-                    setTimeout(() => {
-                        video.muted = false;
-                        video.volume = 1.0;
-                    }, 800);
-                }).catch(() => {});
-
-                return "playing[" + (video.duration ? video.duration.toFixed(1) + "s" : "30.0s") + "]";
-            } catch (e) {
-                return "play-error: " + e.message;
-            }
-        }
-        return 'video-not-found-yet';
-    })();
-    """.trimIndent()
+                    const video = findVideo();
+                    if (video) {
+                        try {
+                            video.muted = false;
+                            video.volume = 1.0;
+                            video.play().catch(() => {});
+                            return "playing[" + (video.duration ? video.duration.toFixed(1) + "s" : "30.0s") + "]";
+                        } catch (e) {
+                            return "play-error";
+                        }
+                    }
+                    return 'video-not-found-yet';
+                })();
+                """.trimIndent()
             ) { rawCount ->
                 val videoStats = rawCount.orEmpty().trim('"')
-                logEvent("$builderName: $villageName Iklan Aktif ($videoStats) — Memulai pelacakan durasi & menunggu Auto-Redirect...")
+                logEvent("$builderName: $villageName Iklan Aktif ($videoStats) — Memicu simulasi ketuk layar & menunggu Auto-Redirect...")
 
-                // ====================================================================
-                // TAMBAHAN: FITUR LOG TIMELINE VIDEO SETIAP 3 DETIK & MONITOR REDIRECT
-                // ====================================================================
+                // KUNCI UTAMA: Tembakkan ketukan fisik tiruan 2 detik setelah iklan muncul untuk membuka kunci play video
+                handler.postDelayed({
+                    if (running && builderInProgress && builderStage == "WAIT_VIDEO_SKIP") {
+                        logEvent("$builderName: $villageName Mengirimkan ketukan fisik tiruan ke pusat layar WebView...")
+                        simulatePhysicalClickOnWebView(view)
+                    }
+                }, 2000L)
+
+                // PEMANTAU TIMELINE & REDIRECT
                 val trackerHandler = android.os.Handler(android.os.Looper.getMainLooper())
                 var secondsPassed = 0
                 
                 val trackRunnable = object : Runnable {
                     override fun run() {
-                        // Hentikan pelacakan jika bot atau proses builder dihentikan user
                         if (!running || !builderInProgress || builderStage != "WAIT_VIDEO_SKIP") return
                         
                         val currentUrl = view.url.orEmpty()
                         secondsPassed++
 
-                        // A. Cek apakah halaman sudah dialihkan ke dorf1 atau dorf2
                         if (currentUrl.contains("dorf1.php") || currentUrl.contains("dorf2.php")) {
                             logEvent("$builderName: $villageName Terdeteksi Auto-Redirect Berhasil (${currentUrl.substringAfter("com/")}) — Lanjut Desa!")
                             
@@ -3206,16 +3221,17 @@ private fun clickTransferSelected() {
                             builderStage = "NORMAL"
 
                             if (townBuilderInProgress) advanceTownBuilderVillage() else goToNextBuilderVillage()
-                            return // Hentikan loop interval
+                            return
                         }
 
-                        // B. Setiap kelipatan 3 detik, tembak JS untuk ambil currentTime video iklan saat ini
                         if (secondsPassed % 3 == 0) {
                             view.evaluateJavascript(
                                 """
                                 (() => {
                                     const video = [...document.querySelectorAll('video')].find(v => v.src.includes('traviangames.com') || v.style.zIndex === '999999');
                                     if (video) {
+                                        // Tetap bantu pancing .play() dari JS jika ketukan sistem operasi sudah masuk
+                                        if (video.paused) video.play().catch(() => {});
                                         return video.currentTime.toFixed(1) + "s / " + (video.duration ? video.duration.toFixed(1) + "s" : "unknown");
                                     }
                                     return "video-missing";
@@ -3227,9 +3243,8 @@ private fun clickTransferSelected() {
                             }
                         }
 
-                        // C. Batas Toleransi Pengaman (Timeout 50 Detik)
-                        if (secondsPassed >= 50) {
-                            logEvent("$builderName: $villageName Gagal Redirect setelah 42 detik. Melompati paksa desa.")
+                        if (secondsPassed >= 45) {
+                            logEvent("$builderName: $villageName Gagal Redirect setelah 45 detik. Melompati paksa desa.")
                             
                             upgradeClickSourceUrl = ""
                             pendingUpgradeUrl = ""
@@ -3239,24 +3254,15 @@ private fun clickTransferSelected() {
                             
                             if (townBuilderInProgress) advanceTownBuilderVillage() else goToNextBuilderVillage()
                         } else {
-                            // Lanjutkan pengecekan interval 1 detik berikutnya
                             trackerHandler.postDelayed(this, 1000L)
                         }
                     }
                 }
-                
-                // Pemicu awal loop interval pelacakan
                 trackerHandler.postDelayed(trackRunnable, 1000L)
             }
         }, 5000L)
     }
 }
-
-    
-        
-
-
-
 
 
     private fun clickTownUpgrade() {
