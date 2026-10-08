@@ -3109,8 +3109,6 @@ private fun simulatePhysicalClickOnWebView(webView: WebView) {
         }
     }
 }
-
-// 2. Fungsi Utama clickFasterUpgrade yang Diperbarui
 private fun clickFasterUpgrade() {
     if (!running || !builderInProgress) return
 
@@ -3124,6 +3122,7 @@ private fun clickFasterUpgrade() {
     val villageName = builderVillages.getOrNull(builderVillageIndex)?.second
         ?: "Village ${builderVillageIndex + 1}"
 
+    // 1. Eksekusi klik tombol Faster
     val js = """
         (() => {
             try {
@@ -3158,6 +3157,7 @@ private fun clickFasterUpgrade() {
 
         logEvent("$builderName: $villageName klik Faster — tunggu 5 detik iklan muncul")
 
+        // 2. Tunggu 5 detik agar pop-up iklan termuat di layar
         handler.postDelayed({
             if (!running || !builderInProgress) return@postDelayed
 
@@ -3190,9 +3190,9 @@ private fun clickFasterUpgrade() {
                 """.trimIndent()
             ) { rawCount ->
                 val videoStats = rawCount.orEmpty().trim('"')
-                logEvent("$builderName: $villageName Iklan Aktif ($videoStats) — Memicu simulasi ketuk layar & menunggu Auto-Redirect...")
+                logEvent("$builderName: $villageName Iklan Terdeteksi ($videoStats) — Memulai simulasi ketuk & otomatisasi durasi...")
 
-                // KUNCI UTAMA: Tembakkan ketukan fisik tiruan 2 detik setelah iklan muncul untuk membuka kunci play video
+                // 3. JEDA 2 DETIK: Tembakkan ketukan fisik tiruan ke WebView agar video mulai berputar
                 handler.postDelayed({
                     if (running && builderInProgress && builderStage == "WAIT_VIDEO_SKIP") {
                         logEvent("$builderName: $villageName Mengirimkan ketukan fisik tiruan ke pusat layar WebView...")
@@ -3200,7 +3200,30 @@ private fun clickFasterUpgrade() {
                     }
                 }, 2000L)
 
-                // PEMANTAU TIMELINE & REDIRECT
+                // 4. JEDA 4 DETIK (2 detik setelah ketukan): Potong durasi video langsung ke (Duration - 1)
+                handler.postDelayed({
+                    if (running && builderInProgress && builderStage == "WAIT_VIDEO_SKIP") {
+                        view.evaluateJavascript(
+                            """
+                            (() => {
+                                const video = [...document.querySelectorAll('video')].find(v => v.src.includes('traviangames.com') || v.style.zIndex === '999999');
+                                if (video && video.duration) {
+                                    const targetTime = video.duration - 1.0;
+                                    video.currentTime = targetTime;
+                                    video.play().catch(() => {});
+                                    return "seeked-to: " + targetTime.toFixed(1) + "s / " + video.duration.toFixed(1) + "s";
+                                }
+                                return "cannot-seek";
+                            })();
+                            """.trimIndent()
+                        ) { seekRaw ->
+                            val seekResult = seekRaw.orEmpty().trim('"')
+                            logEvent("$builderName: $villageName Manipulasi Durasi -> $seekResult")
+                        }
+                    }
+                }, 4000L)
+
+                // 5. PEMANTAU TIMELINE & REDIRECT OTOMATIS GAME
                 val trackerHandler = android.os.Handler(android.os.Looper.getMainLooper())
                 var secondsPassed = 0
                 
@@ -3211,6 +3234,7 @@ private fun clickFasterUpgrade() {
                         val currentUrl = view.url.orEmpty()
                         secondsPassed++
 
+                        // Jika URL berpindah ke dorf1 atau dorf2, artinya klaim iklan SUKSES DAN REAL!
                         if (currentUrl.contains("dorf1.php") || currentUrl.contains("dorf2.php")) {
                             logEvent("$builderName: $villageName Terdeteksi Auto-Redirect Berhasil (${currentUrl.substringAfter("com/")}) — Lanjut Desa!")
                             
@@ -3221,17 +3245,16 @@ private fun clickFasterUpgrade() {
                             builderStage = "NORMAL"
 
                             if (townBuilderInProgress) advanceTownBuilderVillage() else goToNextBuilderVillage()
-                            return
+                            return // Hentikan tracker loop
                         }
 
+                        // Log timeline berkala setiap 3 detik untuk memantau pergerakan detik video iklan
                         if (secondsPassed % 3 == 0) {
                             view.evaluateJavascript(
                                 """
                                 (() => {
                                     const video = [...document.querySelectorAll('video')].find(v => v.src.includes('traviangames.com') || v.style.zIndex === '999999');
                                     if (video) {
-                                        // Tetap bantu pancing .play() dari JS jika ketukan sistem operasi sudah masuk
-                                        if (video.paused) video.play().catch(() => {});
                                         return video.currentTime.toFixed(1) + "s / " + (video.duration ? video.duration.toFixed(1) + "s" : "unknown");
                                     }
                                     return "video-missing";
@@ -3243,8 +3266,9 @@ private fun clickFasterUpgrade() {
                             }
                         }
 
-                        if (secondsPassed >= 45) {
-                            logEvent("$builderName: $villageName Gagal Redirect setelah 45 detik. Melompati paksa desa.")
+                        // Batas waktu toleransi pengaman (Timeout diperingkas menjadi 25 detik saja karena sudah dipercepat)
+                        if (secondsPassed >= 25) {
+                            logEvent("$builderName: $villageName Gagal Auto-Redirect setelah 25 detik. Melompati paksa desa.")
                             
                             upgradeClickSourceUrl = ""
                             pendingUpgradeUrl = ""
@@ -3263,6 +3287,7 @@ private fun clickFasterUpgrade() {
         }, 5000L)
     }
 }
+
 
 
     private fun clickTownUpgrade() {
