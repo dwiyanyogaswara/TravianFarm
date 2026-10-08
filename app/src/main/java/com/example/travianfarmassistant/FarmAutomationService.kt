@@ -16,6 +16,9 @@ import android.net.Uri
 import android.provider.Settings
 import android.view.Gravity
 import android.view.WindowManager
+import android.view.MotionEvent
+import android.view.InputDevice
+import android.os.SystemClock
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.webkit.CookieManager
@@ -3205,6 +3208,70 @@ private fun clickTransferSelected() {
 
     
 
+    /**
+     * Kirim gesture touch ke posisi tengah video. Beberapa video/ad Travian
+     * hanya benar-benar mulai setelah menerima gesture pointer, sehingga
+     * memanggil video.play() saja tidak cukup.
+     */
+    private fun simulateVideoTouch(view: WebView) {
+        try {
+            val w = view.width.coerceAtLeast(1)
+            val h = view.height.coerceAtLeast(1)
+            val x = w / 2f
+            val y = h / 2f
+            val downTime = SystemClock.uptimeMillis()
+
+            val down = MotionEvent.obtain(downTime, downTime, MotionEvent.ACTION_DOWN, x, y, 0)
+            down.source = InputDevice.SOURCE_TOUCHSCREEN
+            val downOk = view.dispatchTouchEvent(down)
+            down.recycle()
+
+            val upTime = SystemClock.uptimeMillis() + 80L
+            val up = MotionEvent.obtain(downTime, upTime, MotionEvent.ACTION_UP, x, y, 0)
+            up.source = InputDevice.SOURCE_TOUCHSCREEN
+            val upOk = view.dispatchTouchEvent(up)
+            up.recycle()
+
+            logEvent("Video touch: DOWN=$downOk UP=$upOk @(${x.toInt()},${y.toInt()})")
+
+            // Fallback DOM pointer/click pada elemen video yang terlihat.
+            view.evaluateJavascript(
+                """
+                (() => {
+                    try {
+                        const videos = [...document.querySelectorAll('video')];
+                        const visible = videos.find(v => {
+                            const r = v.getBoundingClientRect();
+                            return r.width > 0 && r.height > 0;
+                        }) || videos[0];
+                        if (!visible) return 'video-not-found';
+
+                        const r = visible.getBoundingClientRect();
+                        const x = r.left + r.width / 2;
+                        const y = r.top + r.height / 2;
+                        for (const type of ['pointerdown','mousedown','pointerup','mouseup']) {
+                            try {
+                                visible.dispatchEvent(new MouseEvent(type, {
+                                    bubbles:true, cancelable:true, clientX:x, clientY:y,
+                                    view:window, buttons:type.includes('down') ? 1 : 0
+                                }));
+                            } catch (_) {}
+                        }
+                        try { visible.click(); } catch (_) {}
+                        return 'dom-touch-sent';
+                    } catch (e) {
+                        return 'dom-touch-error:' + e.message;
+                    }
+                })();
+                """.trimIndent()
+            ) { raw ->
+                logEvent("Video touch DOM: ${raw.orEmpty().trim('\"')}")
+            }
+        } catch (e: Exception) {
+            logEvent("Video touch gagal: ${e.message ?: e.javaClass.simpleName}")
+        }
+    }
+
     private fun clickFasterUpgrade() {
     if (!running || !builderInProgress) return
 
@@ -3279,8 +3346,7 @@ private fun clickTransferSelected() {
                         try {
                             video.muted = false;
                             video.volume = 1.0;
-                            video.play().catch(() => {});
-                            return "playing[" + video.duration.toFixed(1) + "s]";
+                            return "video-found[" + (video.duration ? video.duration.toFixed(1) : "unknown") + "s]";
                         } catch (e) {
                             return "play-error";
                         }
@@ -3290,13 +3356,33 @@ private fun clickTransferSelected() {
                 """.trimIndent()
             ) { rawCount ->
                 val videoStats = rawCount.orEmpty().trim('"')
-                logEvent("$builderName: $villageName Iklan Aktif ($videoStats) — Memulai pelacakan durasi & menunggu Auto-Redirect...")
+                logEvent("$builderName: $villageName Video ditemukan ($videoStats) — kirim touch untuk memulai playback")
+                simulateVideoTouch(view)
 
                 // ====================================================================
                 // TAMBAHAN: FITUR LOG TIMELINE VIDEO SETIAP 3 DETIK & MONITOR REDIRECT
                 // ====================================================================
                 val trackerHandler = android.os.Handler(android.os.Looper.getMainLooper())
                 var secondsPassed = 0
+                var lastVideoTime = 0.0
+                var retryTouchCount = 0
+
+                trackerHandler.postDelayed({
+                    if (!running || !builderInProgress || builderStage != "WAIT_VIDEO_SKIP") return@postDelayed
+                    view.evaluateJavascript(
+                        """(() => { const v=[...document.querySelectorAll('video')].find(x=>{const r=x.getBoundingClientRect();return r.width>0&&r.height>0})||document.querySelector('video'); return v ? String(v.currentTime||0) : 'missing'; })();"""
+                    ) { raw ->
+                        val t = raw.orEmpty().trim('\"').toDoubleOrNull() ?: 0.0
+                        if (t <= 0.1 && retryTouchCount < 3) {
+                            retryTouchCount++
+                            logEvent("$builderName: $villageName Video belum bergerak (${t}s) — touch ulang #$retryTouchCount")
+                            simulateVideoTouch(view)
+                        } else {
+                            logEvent("$builderName: $villageName Video berjalan: ${t}s")
+                        }
+                        lastVideoTime = t
+                    }
+                }, 1500L)
                 
                 val trackRunnable = object : Runnable {
                     override fun run() {
