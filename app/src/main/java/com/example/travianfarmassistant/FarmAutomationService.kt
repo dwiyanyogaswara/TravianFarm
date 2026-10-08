@@ -3131,32 +3131,52 @@ private fun clickTransferSelected() {
 
             // Mengaktifkan video, memaksa putar
             view.evaluateJavascript(
-                """
-                (() => {
-                    const findVideo = () => {
-                        const videos = [...document.querySelectorAll('video')];
-                        return videos.find(v => {
-                            const src = v.src || '';
-                            const isTravianVideo = src.includes('traviangames.com') || v.style.zIndex === '999999';
-                            const r = v.getBoundingClientRect();
-                            return isTravianVideo && r.width > 0 && r.height > 0;
-                        }) || videos || null;
-                    };
+    """
+    (() => {
+        const findVideo = () => {
+            const videos = [...document.querySelectorAll('video')];
+            return videos.find(v => {
+                const src = v.src || '';
+                const isTravianVideo = src.includes('traviangames.com') || v.style.zIndex === '999999';
+                const r = v.getBoundingClientRect();
+                return isTravianVideo && r.width > 0 && r.height > 0;
+            }) || videos || null;
+        };
 
-                    const video = findVideo();
-                    if (video) {
-                        try {
-                            video.muted = false;
-                            video.volume = 1.0;
-                            video.play().catch(() => {});
-                            return "playing[" + video.duration.toFixed(1) + "s]";
-                        } catch (e) {
-                            return "play-error";
-                        }
-                    }
-                    return 'video-not-found-yet';
-                })();
-                """.trimIndent()
+        const video = findVideo();
+        if (video) {
+            try {
+                video.muted = true; // WAJIB: Setel senyap terlebih dahulu agar Android melonggarkan blokir autoplay
+                video.volume = 0;
+                
+                // KUNCI UTAMA: Simulasikan rentetan event ketukan fisik tiruan pada video
+                const triggerEvents = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'];
+                triggerEvents.forEach(evtType => {
+                    const evt = new MouseEvent(evtType, {
+                        bubbles: true,
+                        cancelable: true,
+                        view: window
+                    });
+                    video.dispatchEvent(evt);
+                });
+
+                // Paksa putar setelah simulasi ketukan dijalankan
+                video.play().then(() => {
+                    // Setelah sukses berputar lancar, kembalikan suaranya secara perlahan
+                    setTimeout(() => {
+                        video.muted = false;
+                        video.volume = 1.0;
+                    }, 800);
+                }).catch(() => {});
+
+                return "playing[" + (video.duration ? video.duration.toFixed(1) + "s" : "30.0s") + "]";
+            } catch (e) {
+                return "play-error: " + e.message;
+            }
+        }
+        return 'video-not-found-yet';
+    })();
+    """.trimIndent()
             ) { rawCount ->
                 val videoStats = rawCount.orEmpty().trim('"')
                 logEvent("$builderName: $villageName Iklan Aktif ($videoStats) — Memulai pelacakan durasi & menunggu Auto-Redirect...")
