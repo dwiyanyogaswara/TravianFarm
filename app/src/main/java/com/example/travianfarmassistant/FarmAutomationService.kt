@@ -3183,11 +3183,14 @@ private fun clickFasterUpgrade() {
                     const findVideo = () => {
                         const videos = [...document.querySelectorAll('video')];
                         return videos.find(v => {
-                            const src = v.src || '';
+                            const src = v.currentSrc || v.src || '';
                             const isTravianVideo = src.includes('traviangames.com') || v.style.zIndex === '999999';
                             const r = v.getBoundingClientRect();
                             return isTravianVideo && r.width > 0 && r.height > 0;
-                        }) || videos || null;
+                        }) || videos.find(v => {
+                            const r = v.getBoundingClientRect();
+                            return r.width > 0 && r.height > 0;
+                        }) || videos[0] || null;
                     };
 
                     const video = findVideo();
