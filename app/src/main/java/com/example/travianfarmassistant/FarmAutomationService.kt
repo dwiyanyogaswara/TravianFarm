@@ -47,6 +47,14 @@ class FarmAutomationService : Service() {
             if (visibleWebViewRef?.get() === view) visibleWebViewRef = null
         }
 
+        fun attachCurrentServiceWebViewToActivity() {
+            instanceRef?.get()?.webView?.let { MainActivity.attachServiceLiveWebView(it) }
+        }
+
+        fun detachServiceLiveWebView(view: WebView) {
+            MainActivity.detachServiceLiveWebView(view)
+        }
+
         fun isRunningFromService(): Boolean {
             return instanceRef?.get()?.running == true
         }
@@ -780,6 +788,7 @@ class FarmAutomationService : Service() {
                 }
             }
         }
+        webView?.let { MainActivity.attachServiceLiveWebView(it) }
     }
 
     private fun onVisibleWebViewDetachedInternal() {
