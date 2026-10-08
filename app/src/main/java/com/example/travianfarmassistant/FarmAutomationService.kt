@@ -20,6 +20,8 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.webkit.WebChromeClient
+import android.view.MotionEvent
+import android.view.View
 import android.util.Base64
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -47,7 +49,6 @@ class FarmAutomationService : Service() {
             if (visibleWebViewRef?.get() === view) visibleWebViewRef = null
         }
 
-
         fun isRunningFromService(): Boolean {
             return instanceRef?.get()?.running == true
         }
@@ -68,6 +69,9 @@ class FarmAutomationService : Service() {
             instanceRef?.get()?.requestTravianLogoutInternal()
         }
 
+        fun onVisibleWebViewDetached() {
+            instanceRef?.get()?.onVisibleWebViewDetachedInternal()
+        }
 
         const val ACTION_START = "com.example.travianfarmassistant.START"
         const val ACTION_STOP = "com.example.travianfarmassistant.STOP"
@@ -751,6 +755,22 @@ class FarmAutomationService : Service() {
             settings.useWideViewPort = true
             settings.loadWithOverviewMode = true
             settings.textZoom = 100
+
+            // Tetap beri WebView automation ukuran/layout internal meskipun Live WebView
+            // sudah dihapus dari UI. Ini membuat koordinat MotionEvent tetap valid.
+            setBackgroundColor(android.graphics.Color.TRANSPARENT)
+            visibility = View.VISIBLE
+            post {
+                val dm = resources.displayMetrics
+                val w = dm.widthPixels.coerceAtLeast(1)
+                val h = dm.heightPixels.coerceAtLeast(1)
+                measure(
+                    View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(h, View.MeasureSpec.EXACTLY)
+                )
+                layout(0, 0, w, h)
+            }
+
             CookieManager.getInstance().setAcceptCookie(true)
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
             addJavascriptInterface(FarmBridge(), "AndroidFarm")
@@ -780,6 +800,10 @@ class FarmAutomationService : Service() {
         }
     }
 
+    private fun onVisibleWebViewDetachedInternal() {
+        debugTrace("ENTER onVisibleWebViewDetachedInternal")
+        if (running && webView == null) ensureServiceWebView()
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun startAutomation() {
@@ -3064,31 +3088,39 @@ private fun clickTransferSelected() {
 private fun simulatePhysicalClickOnWebView(webView: WebView) {
     webView.post {
         try {
-            // Ambil koordinat titik tengah dari komponen WebView Anda saat ini
-            val width = webView.width
-            val height = webView.height
-            val x = (width / 2).toFloat()
-            val y = (height / 2).toFloat()
+            val dm = resources.displayMetrics
+            val width = webView.width.takeIf { it > 0 } ?: dm.widthPixels.coerceAtLeast(1)
+            val height = webView.height.takeIf { it > 0 } ?: dm.heightPixels.coerceAtLeast(1)
 
+            if (webView.width <= 0 || webView.height <= 0) {
+                webView.measure(
+                    View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY)
+                )
+                webView.layout(0, 0, width, height)
+            }
+
+            val x = (width / 2f).coerceIn(1f, (width - 1).toFloat())
+            val y = (height / 2f).coerceIn(1f, (height - 1).toFloat())
             val downTime = android.os.SystemClock.uptimeMillis()
-            val eventTime = android.os.SystemClock.uptimeMillis()
 
-            // Buat event sentuhan jari menekan layar (ACTION_DOWN)
-            val downEvent = android.view.MotionEvent.obtain(
-                downTime, eventTime, android.view.MotionEvent.ACTION_DOWN, x, y, 0
-            )
-            // Buat event sentuhan jari diangkat dari layar (ACTION_UP)
-            val upEvent = android.view.MotionEvent.obtain(
-                downTime, eventTime + 100, android.view.MotionEvent.ACTION_UP, x, y, 0
-            )
+            val downEvent = MotionEvent.obtain(
+                downTime, downTime, MotionEvent.ACTION_DOWN, x, y, 0
+            ).apply { source = android.view.InputDevice.SOURCE_TOUCHSCREEN }
+            val upEvent = MotionEvent.obtain(
+                downTime, downTime + 100, MotionEvent.ACTION_UP, x, y, 0
+            ).apply { source = android.view.InputDevice.SOURCE_TOUCHSCREEN }
 
-            // Tembakkan sentuhan fisik tiruan langsung ke sistem WebView
-            webView.dispatchTouchEvent(downEvent)
-            webView.dispatchTouchEvent(upEvent)
+            val downHandled = webView.dispatchTouchEvent(downEvent)
+            val upHandled = webView.dispatchTouchEvent(upEvent)
 
-            // Bersihkan memori event
             downEvent.recycle()
             upEvent.recycle()
+
+            logEvent(
+                "Simulasi ketuk selesai: ${width}x${height} @ (${x.toInt()},${y.toInt()}) " +
+                    "DOWN=$downHandled UP=$upHandled"
+            )
         } catch (e: Exception) {
             logEvent("Simulation Touch Error: ${e.message}")
         }
